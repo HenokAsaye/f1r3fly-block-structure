@@ -16,7 +16,7 @@ use rand::rngs::OsRng;
 
 use f1r3fly_block_structure::{
     BlockBuilder, BlockSerialize, BlockStore, InMemoryBlockStore, Justification, Bond, Event,
-    ProcessedDeploy, DeployData,
+    PCost, ProcessedDeploy, ProduceEvent, DeployData,
 };
 
 #[tokio::main]
@@ -38,8 +38,12 @@ async fn main() {
 
     let processed = ProcessedDeploy {
         deploy,
-        cost: 10,
-        deploy_log: vec![Event { name: "ok".to_string(), payload: vec![1, 2, 3] }],
+        cost: PCost { cost: 10 },
+        deploy_log: vec![Event::Produce(ProduceEvent {
+            channel_hash: vec![1u8; 32],
+            data: vec![1, 2, 3],
+            persistent: false,
+        })],
         payments_results: Vec::new(),
         is_failed: false,
     };
