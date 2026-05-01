@@ -2,14 +2,12 @@
 
 use std::fs;
 
-use chrono::Utc;
 use thiserror::Error;
 
 use crate::builder::BlockBuildError;
 use crate::hashing::{compute_block_hash, compute_bonds_map_hash, compute_post_state_hash};
 use crate::types::{
-    BlockBody, BlockHeader, BlockMessage, Bond, BondedValidatorInfo, PublicKey, StateDagHash,
-    StateHash,
+    BlockBody, BlockHeader, BlockMessage, Bond, BondedValidatorInfo, StateDagHash,
 };
 
 /// Genesis configuration for building a genesis block.
@@ -19,34 +17,16 @@ pub struct GenesisConfig {
     pub shard_id: String,
     /// Initial validator set with stakes.
     pub validators: Vec<Bond>,
-    /// Pre-funded accounts.
-    pub wallets: Vec<WalletEntry>,
     /// Unix timestamp in milliseconds.
     pub timestamp: i64,
 }
 
-/// Wallet entry for genesis configuration.
-#[derive(Clone, Debug)]
-pub struct WalletEntry {
-    /// Wallet address public key bytes.
-    pub address: PublicKey,
-    /// Initial balance.
-    pub initial_balance: i64,
-}
-
-/// Errors returned while parsing genesis config files.
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    /// File read error.
-    #[error("Config IO error: {0}")]
-    Io(String),
-    /// Parsing error.
-    #[error("Config parse error: {0}")]
-    Parse(String),
-}
-
 impl GenesisConfig {
-    /// Build a genesis BlockMessage from config.
+    /// Build a genesis BlockMessage.
+    ///
+    /// Genesis has empty parents, seq_num = 0, and empty justifications.
+    /// The post-state hash is Blake2b256(b"genesis").
+    /// Returns `BlockBuildError` when required fields are missing.
     pub fn build_genesis_block(&self) -> Result<BlockMessage, BlockBuildError> {
         if self.validators.is_empty() {
             return Err(BlockBuildError::MissingBonds);
@@ -58,7 +38,7 @@ impl GenesisConfig {
         let bonds_map_hash = compute_bonds_map_hash(&self.validators);
         let state_dag = bonds_to_state_dag(&self.validators);
         let state_dag_hash = compute_state_dag_hash(&state_dag);
-        let post_state_hash = compute_wallets_state_hash(&self.wallets);
+        let post_state_hash = compute_post_state_hash(b"genesis");
 
         let header = BlockHeader {
             parents_hash_list: Vec::new(),
@@ -66,7 +46,7 @@ impl GenesisConfig {
             bonds_map_hash,
             state_dag_hash,
             deploy_count: 0,
-            timestamp: if self.timestamp == 0 { Utc::now().timestamp_millis() } else { self.timestamp },
+            timestamp: self.timestamp,
             version: 1,
             seq_num: 0,
             shard_id: self.shard_id.clone(),
@@ -85,75 +65,82 @@ impl GenesisConfig {
             header,
             body,
             justifications: Vec::new(),
-            sender: Vec::new(),
-            sig: Vec::new(),
+            sender: vec![0u8; 32],
+            sig: vec![0u8; 64],
             sig_algorithm: "ed25519".to_string(),
             shard_id: self.shard_id.clone(),
             extra_bytes: Vec::new(),
         })
     }
 
-    /// Load from bonds.txt and wallets.txt format.
-    pub fn from_files(bonds_path: &str, wallets_path: &str) -> Result<Self, ConfigError> {
-        let bonds_txt = fs::read_to_string(bonds_path).map_err(|e| ConfigError::Io(e.to_string()))?;
-        let wallets_txt = fs::read_to_string(wallets_path).map_err(|e| ConfigError::Io(e.to_string()))?;
+    /// Load from bonds.txt format: one line per validator, "hex_pubkey stake".
+    ///
+    /// Returns `ConfigError` on IO or parse failures.
+    pub fn from_bonds_file(path: &str) -> Result<Self, ConfigError> {
+        let content = fs::read_to_string(path)?;
+        Self::from_bonds_str("f1r3fly", &content)
+    }
 
-        let validators = parse_bonds(&bonds_txt)?;
-        let wallets = parse_wallets(&wallets_txt)?;
+    /// Parse bonds.txt content directly (for tests without filesystem).
+    ///
+    /// Returns `ConfigError` on parse failures or empty validator set.
+    pub fn from_bonds_str(shard_id: &str, content: &str) -> Result<Self, ConfigError> {
+        let mut validators = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let pubkey = parts
+                .next()
+                .ok_or_else(|| ConfigError::InvalidBondsLine(line.to_string()))?;
+            let stake = parts
+                .next()
+                .ok_or_else(|| ConfigError::InvalidBondsLine(line.to_string()))?;
+            if parts.next().is_some() {
+                return Err(ConfigError::InvalidBondsLine(line.to_string()));
+            }
+            let validator = hex::decode(pubkey)?;
+            let stake_value: i64 = stake
+                .parse()
+                .map_err(|_| ConfigError::InvalidStake(stake.to_string()))?;
+            validators.push(Bond {
+                validator,
+                stake: stake_value,
+            });
+        }
+
+        if validators.is_empty() {
+            return Err(ConfigError::EmptyValidatorSet);
+        }
 
         Ok(GenesisConfig {
-            shard_id: "f1r3fly".to_string(),
+            shard_id: shard_id.to_string(),
             validators,
-            wallets,
             timestamp: 0,
         })
     }
 }
 
-fn parse_bonds(contents: &str) -> Result<Vec<Bond>, ConfigError> {
-    let mut out = Vec::new();
-    for (idx, line) in contents.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts = split_line(line);
-        if parts.len() != 2 {
-            return Err(ConfigError::Parse(format!("Invalid bonds line {}", idx + 1)));
-        }
-        let key = hex::decode(parts[0]).map_err(|_| ConfigError::Parse("Invalid hex in bonds".to_string()))?;
-        let stake: i64 = parts[1]
-            .parse()
-            .map_err(|_| ConfigError::Parse("Invalid stake".to_string()))?;
-        out.push(Bond { validator: key, stake });
-    }
-    Ok(out)
-}
-
-fn parse_wallets(contents: &str) -> Result<Vec<WalletEntry>, ConfigError> {
-    let mut out = Vec::new();
-    for (idx, line) in contents.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let parts = split_line(line);
-        if parts.len() != 2 {
-            return Err(ConfigError::Parse(format!("Invalid wallets line {}", idx + 1)));
-        }
-        let addr = hex::decode(parts[0]).map_err(|_| ConfigError::Parse("Invalid hex in wallets".to_string()))?;
-        let balance: i64 = parts[1]
-            .parse()
-            .map_err(|_| ConfigError::Parse("Invalid balance".to_string()))?;
-        out.push(WalletEntry { address: addr, initial_balance: balance });
-    }
-    Ok(out)
-}
-
-fn split_line(line: &str) -> Vec<&str> {
-    line.split(|c| c == ',' || c == ' ' || c == '\t')
-        .filter(|s| !s.is_empty())
-        .collect()
+/// Errors returned while parsing genesis config files.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    /// File read error.
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    /// Bonds line is invalid.
+    #[error("Invalid bonds line '{0}': expected 'hex_pubkey stake'")]
+    InvalidBondsLine(String),
+    /// Hex decoding error.
+    #[error("Invalid hex pubkey: {0}")]
+    InvalidHex(#[from] hex::FromHexError),
+    /// Stake parsing error.
+    #[error("Invalid stake amount: {0}")]
+    InvalidStake(String),
+    /// Validator set is empty.
+    #[error("Validator set is empty")]
+    EmptyValidatorSet,
 }
 
 fn bonds_to_state_dag(bonds: &[Bond]) -> Vec<BondedValidatorInfo> {
@@ -161,7 +148,7 @@ fn bonds_to_state_dag(bonds: &[Bond]) -> Vec<BondedValidatorInfo> {
         .iter()
         .map(|bond| BondedValidatorInfo {
             validator: bond.validator.clone(),
-            stake: bond.stake,
+            free_stake: bond.stake,
         })
         .collect()
 }
@@ -171,17 +158,8 @@ fn compute_state_dag_hash(state_dag: &[BondedValidatorInfo]) -> StateDagHash {
     for entry in state_dag {
         bytes.extend_from_slice(&(entry.validator.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&entry.validator);
-        bytes.extend_from_slice(&entry.stake.to_le_bytes());
+        bytes.extend_from_slice(&entry.free_stake.to_le_bytes());
     }
     compute_post_state_hash(&bytes)
 }
 
-fn compute_wallets_state_hash(wallets: &[WalletEntry]) -> StateHash {
-    let mut bytes = Vec::new();
-    for entry in wallets {
-        bytes.extend_from_slice(&(entry.address.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&entry.address);
-        bytes.extend_from_slice(&entry.initial_balance.to_le_bytes());
-    }
-    compute_post_state_hash(&bytes)
-}

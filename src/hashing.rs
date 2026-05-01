@@ -3,21 +3,27 @@
 use blake2::{Blake2b512, Digest};
 use prost::Message;
 
-use crate::proto::f1r3fly_block as proto;
+use crate::proto::block as proto;
 use crate::types::{BlockHash, BlockHeader, BondsHash, Bond, DeployData, StateHash};
 
 /// Compute the block hash (Blake2b-256) from the header.
+///
+/// Deterministic and infallible.
 pub fn compute_block_hash(header: &BlockHeader) -> BlockHash {
     compute_header_hash(header)
 }
 
 /// Compute the header hash (Blake2b-256) from the header.
+///
+/// Deterministic and infallible.
 pub fn compute_header_hash(header: &BlockHeader) -> [u8; 32] {
     let bytes = serialize_header_for_hashing(header);
     hash_bytes(&bytes)
 }
 
 /// Compute the deploy hash (Blake2b-256) from a deploy.
+///
+/// Deterministic and infallible.
 pub fn compute_deploy_hash(deploy: &DeployData) -> [u8; 32] {
     let proto_deploy = to_proto_deploy(deploy);
     let mut buf = Vec::new();
@@ -26,18 +32,24 @@ pub fn compute_deploy_hash(deploy: &DeployData) -> [u8; 32] {
 }
 
 /// Compute the bonds map hash (Blake2b-256) from bonds list.
+///
+/// Deterministic and infallible.
 pub fn compute_bonds_map_hash(bonds: &[Bond]) -> BondsHash {
     let mut sorted = bonds.to_vec();
     sorted.sort_by(|a, b| a.validator.cmp(&b.validator));
-    let proto_bonds = proto::BondsMap {
-        bonds: sorted.into_iter().map(to_proto_bond).collect(),
-    };
-    let mut buf = Vec::new();
-    proto_bonds.encode(&mut buf).unwrap_or_default();
-    hash_bytes(&buf)
+
+    let mut bytes = Vec::new();
+    for bond in sorted {
+        bytes.extend_from_slice(&(bond.validator.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&bond.validator);
+        bytes.extend_from_slice(&bond.stake.to_le_bytes());
+    }
+    hash_bytes(&bytes)
 }
 
 /// Compute post-state hash (Blake2b-256) from raw state root bytes.
+///
+/// Deterministic and infallible.
 pub fn compute_post_state_hash(state_root: &[u8]) -> StateHash {
     hash_bytes(state_root)
 }
@@ -65,7 +77,7 @@ fn to_proto_header(header: &BlockHeader) -> proto::BlockHeader {
         post_state_hash: header.post_state_hash.to_vec(),
         bonds_map_hash: header.bonds_map_hash.to_vec(),
         state_dag_hash: header.state_dag_hash.to_vec(),
-        deploy_count: header.deploy_count,
+        deploy_count: header.deploy_count as i32,
         timestamp: header.timestamp,
         version: header.version,
         seq_num: header.seq_num,
@@ -84,12 +96,5 @@ fn to_proto_deploy(deploy: &DeployData) -> proto::DeployData {
         phlo_limit: deploy.phlo_limit,
         valid_after_block_number: deploy.valid_after_block_number,
         shard_id: deploy.shard_id.clone(),
-    }
-}
-
-fn to_proto_bond(bond: Bond) -> proto::Bond {
-    proto::Bond {
-        validator: bond.validator,
-        stake: bond.stake,
     }
 }
