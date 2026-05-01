@@ -1,0 +1,29 @@
+[package]
+name = "f1r3fly-block-structure"
+version = "0.1.0"
+edition = "2021"
+description = "Block structure implementation compatible with the F1r3fly blockchain architecture"
+license = "Apache-2.0"
+
+[dependencies]
+blake2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+prost = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+rand = "0.8"
+chrono = "0.4"
+sha2 = "0.10"
+bytes = "1"
+tracing = "0.1"
+
+[build-dependencies]
+prost-build = "0.12"
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tokio-test = "0.4"
