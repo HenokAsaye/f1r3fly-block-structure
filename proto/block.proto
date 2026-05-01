@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package f1r3fly.block;
+package block;
 
 message BlockMessage {
   bytes block_hash = 1;
@@ -19,7 +19,7 @@ message BlockHeader {
   bytes post_state_hash = 2;
   bytes bonds_map_hash = 3;
   bytes state_dag_hash = 4;
-  uint32 deploy_count = 5;
+  int32 deploy_count = 5;
   int64 timestamp = 6;
   int64 version = 7;
   int64 seq_num = 8;
@@ -34,17 +34,28 @@ message BlockBody {
 
 message ProcessedDeploy {
   DeployData deploy = 1;
-  int64 cost = 2;
+  PCost cost = 2;
   repeated Event deploy_log = 3;
   repeated Event payments_results = 4;
   bool is_failed = 5;
 }
 
+message PCost {
+  int64 cost = 1;
+}
+
 message ProcessedSystemDeploy {
-  DeployData deploy = 1;
-  int64 cost = 2;
-  repeated Event deploy_log = 3;
-  bool is_failed = 4;
+  SystemDeploy deploy = 1;
+  PCost cost = 2;
+  repeated Event event_log = 3;
+  string error_msg = 4;
+  bool has_error = 5;
+}
+
+message SystemDeploy {
+  bytes data = 1;
+  bytes sig = 2;
+  string sig_algorithm = 3;
 }
 
 message DeployData {
@@ -71,12 +82,32 @@ message Bond {
 
 message BondedValidatorInfo {
   bytes validator = 1;
-  int64 stake = 2;
+  int64 free_stake = 2;
 }
 
 message Event {
-  string name = 1;
-  bytes payload = 2;
+  oneof event_type {
+    ProduceEvent produce = 1;
+    ConsumeEvent consume = 2;
+    CommEvent comm = 3;
+  }
+}
+
+message ProduceEvent {
+  bytes channel_hash = 1;
+  bytes data = 2;
+  bool persistent = 3;
+}
+
+message ConsumeEvent {
+  repeated bytes channel_hashes = 1;
+  bytes continuation_hash = 2;
+  bool persistent = 3;
+}
+
+message CommEvent {
+  ConsumeEvent consume = 1;
+  repeated ProduceEvent produces = 2;
 }
 
 message BondsMap {
