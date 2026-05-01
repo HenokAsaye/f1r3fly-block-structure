@@ -1,10 +1,9 @@
 //! Serialization support for protobuf and JSON.
 
 use prost::Message;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::proto::f1r3fly_block as proto;
+use crate::proto::block as proto;
 use crate::types::*;
 
 /// Errors returned during serialization or deserialization.
@@ -21,12 +20,20 @@ pub enum SerializationError {
 /// Serialization trait for block types.
 pub trait BlockSerialize: Sized {
     /// Serialize to protobuf bytes.
+    ///
+    /// Returns `SerializationError` on encoding failure.
     fn to_proto_bytes(&self) -> Result<Vec<u8>, SerializationError>;
     /// Deserialize from protobuf bytes.
+    ///
+    /// Returns `SerializationError` on decoding failure.
     fn from_proto_bytes(bytes: &[u8]) -> Result<Self, SerializationError>;
     /// Serialize to JSON string.
+    ///
+    /// Returns `SerializationError` on encoding failure.
     fn to_json(&self) -> Result<String, SerializationError>;
     /// Deserialize from JSON string.
+    ///
+    /// Returns `SerializationError` on decoding failure.
     fn from_json(json: &str) -> Result<Self, SerializationError>;
 }
 
@@ -143,7 +150,7 @@ fn to_proto_header(header: &BlockHeader) -> proto::BlockHeader {
         post_state_hash: header.post_state_hash.to_vec(),
         bonds_map_hash: header.bonds_map_hash.to_vec(),
         state_dag_hash: header.state_dag_hash.to_vec(),
-        deploy_count: header.deploy_count,
+        deploy_count: header.deploy_count as i32,
         timestamp: header.timestamp,
         version: header.version,
         seq_num: header.seq_num,
@@ -161,7 +168,7 @@ fn from_proto_header(proto: proto::BlockHeader) -> BlockHeader {
         post_state_hash: bytes_to_hash(&proto.post_state_hash),
         bonds_map_hash: bytes_to_hash(&proto.bonds_map_hash),
         state_dag_hash: bytes_to_hash(&proto.state_dag_hash),
-        deploy_count: proto.deploy_count,
+        deploy_count: proto.deploy_count as u32,
         timestamp: proto.timestamp,
         version: proto.version,
         seq_num: proto.seq_num,
@@ -192,7 +199,7 @@ fn from_proto_body(proto: proto::BlockBody) -> BlockBody {
 fn to_proto_processed_deploy(deploy: &ProcessedDeploy) -> proto::ProcessedDeploy {
     proto::ProcessedDeploy {
         deploy: Some(to_proto_deploy(&deploy.deploy)),
-        cost: deploy.cost,
+        cost: Some(to_proto_pcost(&deploy.cost)),
         deploy_log: deploy.deploy_log.iter().map(to_proto_event).collect(),
         payments_results: deploy.payments_results.iter().map(to_proto_event).collect(),
         is_failed: deploy.is_failed,
@@ -202,7 +209,7 @@ fn to_proto_processed_deploy(deploy: &ProcessedDeploy) -> proto::ProcessedDeploy
 fn from_proto_processed_deploy(proto: proto::ProcessedDeploy) -> ProcessedDeploy {
     ProcessedDeploy {
         deploy: from_proto_deploy(proto.deploy.unwrap_or_default()),
-        cost: proto.cost,
+        cost: from_proto_pcost(proto.cost.unwrap_or_default()),
         deploy_log: proto.deploy_log.into_iter().map(from_proto_event).collect(),
         payments_results: proto.payments_results.into_iter().map(from_proto_event).collect(),
         is_failed: proto.is_failed,
@@ -211,20 +218,29 @@ fn from_proto_processed_deploy(proto: proto::ProcessedDeploy) -> ProcessedDeploy
 
 fn to_proto_processed_system_deploy(deploy: &ProcessedSystemDeploy) -> proto::ProcessedSystemDeploy {
     proto::ProcessedSystemDeploy {
-        deploy: Some(to_proto_deploy(&deploy.deploy)),
-        cost: deploy.cost,
-        deploy_log: deploy.deploy_log.iter().map(to_proto_event).collect(),
-        is_failed: deploy.is_failed,
+        deploy: Some(to_proto_system_deploy(&deploy.deploy)),
+        cost: Some(to_proto_pcost(&deploy.cost)),
+        event_log: deploy.event_log.iter().map(to_proto_event).collect(),
+        error_msg: deploy.error_msg.clone().unwrap_or_default(),
+        has_error: deploy.error_msg.is_some(),
     }
 }
 
 fn from_proto_processed_system_deploy(proto: proto::ProcessedSystemDeploy) -> ProcessedSystemDeploy {
     ProcessedSystemDeploy {
-        deploy: from_proto_deploy(proto.deploy.unwrap_or_default()),
-        cost: proto.cost,
-        deploy_log: proto.deploy_log.into_iter().map(from_proto_event).collect(),
-        is_failed: proto.is_failed,
+        deploy: from_proto_system_deploy(proto.deploy.unwrap_or_default()),
+        cost: from_proto_pcost(proto.cost.unwrap_or_default()),
+        event_log: proto.event_log.into_iter().map(from_proto_event).collect(),
+        error_msg: if proto.has_error { Some(proto.error_msg) } else { None },
     }
+}
+
+fn to_proto_pcost(cost: &PCost) -> proto::PCost {
+    proto::PCost { cost: cost.cost }
+}
+
+fn from_proto_pcost(proto: proto::PCost) -> PCost {
+    PCost { cost: proto.cost }
 }
 
 fn to_proto_deploy(deploy: &DeployData) -> proto::DeployData {
@@ -255,6 +271,22 @@ fn from_proto_deploy(proto: proto::DeployData) -> DeployData {
     }
 }
 
+fn to_proto_system_deploy(deploy: &SystemDeploy) -> proto::SystemDeploy {
+    proto::SystemDeploy {
+        data: deploy.data.clone(),
+        sig: deploy.sig.clone(),
+        sig_algorithm: deploy.sig_algorithm.clone(),
+    }
+}
+
+fn from_proto_system_deploy(proto: proto::SystemDeploy) -> SystemDeploy {
+    SystemDeploy {
+        data: proto.data,
+        sig: proto.sig,
+        sig_algorithm: proto.sig_algorithm,
+    }
+}
+
 fn to_proto_justification(just: &Justification) -> proto::Justification {
     proto::Justification {
         validator: just.validator.clone(),
@@ -272,28 +304,82 @@ fn from_proto_justification(proto: proto::Justification) -> Justification {
 fn to_proto_bonded_validator_info(info: &BondedValidatorInfo) -> proto::BondedValidatorInfo {
     proto::BondedValidatorInfo {
         validator: info.validator.clone(),
-        stake: info.stake,
+        free_stake: info.free_stake,
     }
 }
 
 fn from_proto_bonded_validator_info(proto: proto::BondedValidatorInfo) -> BondedValidatorInfo {
     BondedValidatorInfo {
         validator: proto.validator,
-        stake: proto.stake,
+        free_stake: proto.free_stake,
     }
 }
 
 fn to_proto_event(event: &Event) -> proto::Event {
-    proto::Event {
-        name: event.name.clone(),
-        payload: event.payload.clone(),
-    }
+    let event_type = match event {
+        Event::Produce(produce) => Some(proto::event::EventType::Produce(to_proto_produce(produce))),
+        Event::Consume(consume) => Some(proto::event::EventType::Consume(to_proto_consume(consume))),
+        Event::Comm(comm) => Some(proto::event::EventType::Comm(to_proto_comm(comm))),
+    };
+    proto::Event { event_type }
 }
 
 fn from_proto_event(proto: proto::Event) -> Event {
-    Event {
-        name: proto.name,
-        payload: proto.payload,
+    match proto.event_type {
+        Some(proto::event::EventType::Produce(produce)) => Event::Produce(from_proto_produce(produce)),
+        Some(proto::event::EventType::Consume(consume)) => Event::Consume(from_proto_consume(consume)),
+        Some(proto::event::EventType::Comm(comm)) => Event::Comm(from_proto_comm(comm)),
+        None => Event::Produce(ProduceEvent {
+            channel_hash: Vec::new(),
+            data: Vec::new(),
+            persistent: false,
+        }),
+    }
+}
+
+fn to_proto_produce(event: &ProduceEvent) -> proto::ProduceEvent {
+    proto::ProduceEvent {
+        channel_hash: event.channel_hash.clone(),
+        data: event.data.clone(),
+        persistent: event.persistent,
+    }
+}
+
+fn from_proto_produce(proto: proto::ProduceEvent) -> ProduceEvent {
+    ProduceEvent {
+        channel_hash: proto.channel_hash,
+        data: proto.data,
+        persistent: proto.persistent,
+    }
+}
+
+fn to_proto_consume(event: &ConsumeEvent) -> proto::ConsumeEvent {
+    proto::ConsumeEvent {
+        channel_hashes: event.channel_hashes.clone(),
+        continuation_hash: event.continuation_hash.clone(),
+        persistent: event.persistent,
+    }
+}
+
+fn from_proto_consume(proto: proto::ConsumeEvent) -> ConsumeEvent {
+    ConsumeEvent {
+        channel_hashes: proto.channel_hashes,
+        continuation_hash: proto.continuation_hash,
+        persistent: proto.persistent,
+    }
+}
+
+fn to_proto_comm(event: &CommEvent) -> proto::CommEvent {
+    proto::CommEvent {
+        consume: Some(to_proto_consume(&event.consume)),
+        produces: event.produces.iter().map(to_proto_produce).collect(),
+    }
+}
+
+fn from_proto_comm(proto: proto::CommEvent) -> CommEvent {
+    CommEvent {
+        consume: from_proto_consume(proto.consume.unwrap_or_default()),
+        produces: proto.produces.into_iter().map(from_proto_produce).collect(),
     }
 }
 
@@ -304,5 +390,3 @@ fn bytes_to_hash(bytes: &[u8]) -> [u8; 32] {
     out
 }
 
-#[derive(Serialize, Deserialize)]
-struct _SerdeMarker;
