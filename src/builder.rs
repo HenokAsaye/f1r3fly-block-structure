@@ -47,78 +47,80 @@ pub struct BlockBuilder {
 }
 
 impl BlockBuilder {
-    /// Create a new builder.
+    /// Create a new builder. No validation is performed at this stage.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add a parent hash.
+    /// Add a parent hash and return the updated builder. No validation is performed.
     pub fn with_parent(mut self, parent_hash: BlockHash) -> Self {
         self.parents.push(parent_hash);
         self
     }
 
-    /// Add parent hashes.
+    /// Add parent hashes and return the updated builder. No validation is performed.
     pub fn with_parents(mut self, parent_hashes: Vec<BlockHash>) -> Self {
         self.parents.extend(parent_hashes);
         self
     }
 
-    /// Add a deploy.
+    /// Add a deploy and return the updated builder. No validation is performed.
     pub fn with_deploy(mut self, deploy: ProcessedDeploy) -> Self {
         self.deploys.push(deploy);
         self
     }
 
-    /// Add deploys.
+    /// Add deploys and return the updated builder. No validation is performed.
     pub fn with_deploys(mut self, deploys: Vec<ProcessedDeploy>) -> Self {
         self.deploys.extend(deploys);
         self
     }
 
-    /// Set post-state hash.
+    /// Set post-state hash and return the updated builder. No validation is performed.
     pub fn with_post_state_hash(mut self, hash: StateHash) -> Self {
         self.post_state_hash = Some(hash);
         self
     }
 
-    /// Set bonds.
+    /// Set bonds and return the updated builder. No validation is performed.
     pub fn with_bonds(mut self, bonds: Vec<Bond>) -> Self {
         self.bonds = bonds;
         self
     }
 
-    /// Set justifications.
+    /// Set justifications and return the updated builder. No validation is performed.
     pub fn with_justifications(mut self, justifications: Vec<Justification>) -> Self {
         self.justifications = justifications;
         self
     }
 
-    /// Set shard id.
+    /// Set shard id and return the updated builder. No validation is performed.
     pub fn with_shard_id(mut self, shard_id: String) -> Self {
         self.shard_id = Some(shard_id);
         self
     }
 
-    /// Set sender public key.
+    /// Set sender public key and return the updated builder. No validation is performed.
     pub fn with_sender(mut self, public_key: PublicKey) -> Self {
         self.sender = Some(public_key);
         self
     }
 
-    /// Set sequence number.
+    /// Set sequence number and return the updated builder. No validation is performed.
     pub fn with_seq_num(mut self, seq_num: i64) -> Self {
         self.seq_num = Some(seq_num);
         self
     }
 
-    /// Set timestamp in milliseconds since epoch.
+    /// Set timestamp in milliseconds since epoch and return the updated builder. No validation is performed.
     pub fn with_timestamp(mut self, timestamp: i64) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
 
-    /// Finalizes, computes block_hash, ready to sign.
+    /// Finalizes the block and computes `block_hash`.
+    ///
+    /// Returns `BlockBuildError` if required fields are missing.
     pub fn build_unsigned(self) -> Result<UnsignedBlock, BlockBuildError> {
         if self.parents.is_empty() {
             return Err(BlockBuildError::MissingParents);
@@ -172,6 +174,8 @@ impl BlockBuilder {
     }
 
     /// Builds and signs with provided signing function.
+    ///
+    /// Returns `BlockBuildError` if required fields are missing.
     pub fn build_and_sign<F>(self, sign_fn: F) -> Result<BlockMessage, BlockBuildError>
     where
         F: Fn(&[u8]) -> Signature,
@@ -189,6 +193,8 @@ pub struct UnsignedBlock {
 
 impl UnsignedBlock {
     /// Sign the block with a signing function over the block hash.
+    ///
+    /// Assumes `block_hash` is already computed.
     pub fn sign<F>(mut self, sign_fn: F) -> BlockMessage
     where
         F: Fn(&[u8]) -> Signature,
@@ -203,7 +209,7 @@ fn bonds_to_state_dag(bonds: &[Bond]) -> Vec<BondedValidatorInfo> {
         .iter()
         .map(|bond| BondedValidatorInfo {
             validator: bond.validator.clone(),
-            stake: bond.stake,
+            free_stake: bond.stake,
         })
         .collect()
 }
@@ -213,7 +219,7 @@ fn compute_state_dag_hash(state_dag: &[BondedValidatorInfo]) -> StateDagHash {
     for entry in state_dag {
         bytes.extend_from_slice(&(entry.validator.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&entry.validator);
-        bytes.extend_from_slice(&entry.stake.to_le_bytes());
+        bytes.extend_from_slice(&entry.free_stake.to_le_bytes());
     }
     crate::hashing::compute_post_state_hash(&bytes)
 }
