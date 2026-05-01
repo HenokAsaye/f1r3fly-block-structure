@@ -15,7 +15,11 @@ pub type PublicKey = Vec<u8>;
 /// Ed25519 signature bytes.
 pub type Signature = Vec<u8>;
 /// Cost in phlo units.
-pub type PCost = i64;
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PCost {
+    /// Cost value.
+    pub cost: i64,
+}
 
 /// The complete block message — top-level unit of the chain.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,14 +96,25 @@ pub struct ProcessedDeploy {
 /// A processed system deploy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessedSystemDeploy {
-    /// Raw deploy payload.
-    pub deploy: DeployData,
+    /// System deploy payload.
+    pub deploy: SystemDeploy,
     /// Execution cost.
     pub cost: PCost,
-    /// Deploy log events.
-    pub deploy_log: Vec<Event>,
-    /// Whether execution failed.
-    pub is_failed: bool,
+    /// Event log produced by system deploy.
+    pub event_log: Vec<Event>,
+    /// Optional error message if execution failed.
+    pub error_msg: Option<String>,
+}
+
+/// System deploy data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemDeploy {
+    /// Raw deploy data.
+    pub data: Vec<u8>,
+    /// Signature bytes.
+    pub sig: Vec<u8>,
+    /// Signature algorithm.
+    pub sig_algorithm: String,
 }
 
 /// The raw deploy submitted by a user.
@@ -148,15 +163,48 @@ pub struct Bond {
 pub struct BondedValidatorInfo {
     /// Validator public key.
     pub validator: PublicKey,
-    /// Stake amount.
-    pub stake: i64,
+    /// Free stake amount.
+    pub free_stake: i64,
 }
 
 /// Execution event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Event {
-    /// Event name.
-    pub name: String,
-    /// Event payload.
-    pub payload: Vec<u8>,
+pub enum Event {
+    /// Produce event.
+    Produce(ProduceEvent),
+    /// Consume event.
+    Consume(ConsumeEvent),
+    /// Comm event.
+    Comm(CommEvent),
+}
+
+/// Produce event details.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProduceEvent {
+    /// Blake2b hash of the channel name.
+    pub channel_hash: Vec<u8>,
+    /// Serialized Rholang term data.
+    pub data: Vec<u8>,
+    /// Whether the produce is persistent.
+    pub persistent: bool,
+}
+
+/// Consume event details.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsumeEvent {
+    /// Blake2b hashes of channel names.
+    pub channel_hashes: Vec<Vec<u8>>,
+    /// Hash of the continuation.
+    pub continuation_hash: Vec<u8>,
+    /// Whether the consume is persistent.
+    pub persistent: bool,
+}
+
+/// Comm event details.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommEvent {
+    /// Consume event.
+    pub consume: ConsumeEvent,
+    /// Produce events.
+    pub produces: Vec<ProduceEvent>,
 }
