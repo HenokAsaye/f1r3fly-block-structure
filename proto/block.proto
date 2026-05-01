@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package f1r3fly.block;
+
+message BlockMessage {
+  bytes block_hash = 1;
+  BlockHeader header = 2;
+  BlockBody body = 3;
+  repeated Justification justifications = 4;
+  bytes sender = 5;
+  bytes sig = 6;
+  string sig_algorithm = 7;
+  string shard_id = 8;
+  bytes extra_bytes = 9;
+}
+
+message BlockHeader {
+  repeated bytes parents_hash_list = 1;
+  bytes post_state_hash = 2;
+  bytes bonds_map_hash = 3;
+  bytes state_dag_hash = 4;
+  uint32 deploy_count = 5;
+  int64 timestamp = 6;
+  int64 version = 7;
+  int64 seq_num = 8;
+  string shard_id = 9;
+}
+
+message BlockBody {
+  repeated ProcessedDeploy deploys = 1;
+  repeated ProcessedSystemDeploy system_deploys = 2;
+  repeated BondedValidatorInfo state_dag = 3;
+}
+
+message ProcessedDeploy {
+  DeployData deploy = 1;
+  int64 cost = 2;
+  repeated Event deploy_log = 3;
+  repeated Event payments_results = 4;
+  bool is_failed = 5;
+}
+
+message ProcessedSystemDeploy {
+  DeployData deploy = 1;
+  int64 cost = 2;
+  repeated Event deploy_log = 3;
+  bool is_failed = 4;
+}
+
+message DeployData {
+  bytes deployer = 1;
+  string term = 2;
+  int64 timestamp = 3;
+  bytes sig = 4;
+  string sig_algorithm = 5;
+  int64 phlo_price = 6;
+  int64 phlo_limit = 7;
+  int64 valid_after_block_number = 8;
+  string shard_id = 9;
+}
+
+message Justification {
+  bytes validator = 1;
+  bytes latest_block_hash = 2;
+}
+
+message Bond {
+  bytes validator = 1;
+  int64 stake = 2;
+}
+
+message BondedValidatorInfo {
+  bytes validator = 1;
+  int64 stake = 2;
+}
+
+message Event {
+  string name = 1;
+  bytes payload = 2;
+}
+
+message BondsMap {
+  repeated Bond bonds = 1;
+}
