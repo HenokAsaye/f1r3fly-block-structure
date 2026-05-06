@@ -1,135 +1,65 @@
-//! Block validation routines.
-
-use chrono::Utc;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-use crate::hashing::compute_block_hash;
+use crate::hashing::{compute_block_hash, compute_body_hash};
 use crate::types::{BlockHash, BlockMessage};
 
-/// Errors returned during block validation.
 #[derive(Debug, Error)]
 pub enum ValidationError {
-    /// Block hash mismatch.
     #[error("Block hash mismatch: expected {expected}, got {actual}")]
     InvalidBlockHash { expected: String, actual: String },
-    /// Signature is invalid.
     #[error("Signature verification failed")]
     InvalidSignature,
-    /// Missing parents for non-genesis blocks.
-    #[error("Block has no parents and is not genesis")]
-    MissingParents,
-    /// Shard ID mismatch between deploy and block.
-    #[error("Deploy shard_id '{deploy}' does not match block shard_id '{block}'")]
-    ShardIdMismatch { deploy: String, block: String },
-    /// Phlo limit must be positive.
-    #[error("Invalid phlo limit {0}: must be > 0")]
-    InvalidPhloLimit(i64),
-    /// Phlo price must be positive.
-    #[error("Invalid phlo price {0}: must be > 0")]
-    InvalidPhloPrice(i64),
-    /// Bonds map is empty.
-    #[error("Bonds map is empty")]
-    EmptyBondsMap,
-    /// Deploy timestamp is in the future.
-    #[error("Deploy timestamp {0} is in the future")]
-    DeployTimestampInFuture(i64),
-    /// Sender key is empty.
+    #[error("Body hash mismatch")]
+    InvalidBodyHash,
+    #[error("Sender not bonded in parents")]
+    SenderNotBonded,
+    #[error("Invalid sequence number")]
+    InvalidSequenceNumber,
+    #[error("Post-state hash is zero")]
+    ZeroPostStateHash,
+    #[error("Shard id mismatch")]
+    ShardIdMismatch,
+    #[error("Duplicate deploy signature in block")]
+    DuplicateDeploySignature,
+    #[error("Parent hashes are invalid")]
+    InvalidParents,
+    #[error("Unknown justification hash")]
+    UnknownJustification,
     #[error("Sender public key is empty")]
     EmptySender,
-    /// Signature is empty.
-    #[error("Signature is empty")]
-    EmptySignature,
-    /// Sequence number invalid.
-    #[error("Seq num {0} is not positive")]
-    InvalidSeqNum(i64),
-    /// Justification refers to unknown validator.
-    #[error("Justification references unknown validator")]
-    JustificationValidatorMismatch,
 }
 
-/// Block validator for structural checks.
+pub struct ValidationContext {
+    pub known_validators: HashSet<Vec<u8>>,
+    pub parent_blocks: HashMap<BlockHash, BlockMessage>,
+    pub shard_id: String,
+}
+
 pub struct BlockValidator;
 
 impl BlockValidator {
-    /// Runs all structural checks. Does not verify signature.
-    ///
-    /// Returns `ValidationError` for any structural invariant violation.
     pub fn validate_structure(block: &BlockMessage) -> Result<(), ValidationError> {
         if block.sender.is_empty() {
             return Err(ValidationError::EmptySender);
         }
-        if block.sig.is_empty() {
-            return Err(ValidationError::EmptySignature);
-        }
-        if block.shard_id.is_empty() {
-            return Err(ValidationError::ShardIdMismatch {
-                deploy: String::new(),
-                block: block.shard_id.clone(),
-            });
-        }
-        if block.header.seq_num < 0 || (block.header.seq_num == 0 && !block.header.parents_hash_list.is_empty()) {
-            return Err(ValidationError::InvalidSeqNum(block.header.seq_num));
-        }
-        if block.header.seq_num > 0 && block.header.parents_hash_list.is_empty() {
-            return Err(ValidationError::MissingParents);
-        }
-        if block.header.bonds_map_hash == [0u8; 32] || block.body.state_dag.is_empty() {
-            return Err(ValidationError::EmptyBondsMap);
-        }
-
-        let now = Utc::now().timestamp_millis();
-        for deploy in &block.body.deploys {
-            if deploy.deploy.phlo_limit <= 0 {
-                return Err(ValidationError::InvalidPhloLimit(deploy.deploy.phlo_limit));
-            }
-            if deploy.deploy.phlo_price <= 0 {
-                return Err(ValidationError::InvalidPhloPrice(deploy.deploy.phlo_price));
-            }
-            if deploy.deploy.shard_id != block.shard_id {
-                return Err(ValidationError::ShardIdMismatch {
-                    deploy: deploy.deploy.shard_id.clone(),
-                    block: block.shard_id.clone(),
-                });
-            }
-            if deploy.deploy.timestamp > now {
-                return Err(ValidationError::DeployTimestampInFuture(deploy.deploy.timestamp));
-            }
-        }
-
-        let validators: Vec<&[u8]> = block
-            .body
-            .state_dag
-            .iter()
-            .map(|b| b.validator.as_slice())
-            .collect();
-        for justification in &block.justifications {
-            let known = validators.contains(&justification.validator.as_slice());
-            if !known {
-                return Err(ValidationError::JustificationValidatorMismatch);
-            }
-        }
-
         Ok(())
     }
 
-    /// Verify block_hash == Blake2b256(canonical_header_bytes).
-    ///
-    /// Returns `ValidationError::InvalidBlockHash` on mismatch.
     pub fn validate_hash(block: &BlockMessage) -> Result<(), ValidationError> {
-        let computed = compute_block_hash(&block.header);
-        if computed != block.block_hash {
+        if compute_block_hash(&block.header) != block.block_hash {
             return Err(ValidationError::InvalidBlockHash {
-                expected: hex::encode(computed),
+                expected: hex::encode(compute_block_hash(&block.header)),
                 actual: hex::encode(block.block_hash),
             });
         }
+        if compute_body_hash(&block.body) != block.header.body_hash {
+            return Err(ValidationError::InvalidBodyHash);
+        }
         Ok(())
     }
 
-    /// Verify Ed25519 signature over block_hash.
-    ///
-    /// Returns `ValidationError::InvalidSignature` on failure.
     pub fn validate_signature(block: &BlockMessage) -> Result<(), ValidationError> {
         let key_bytes: [u8; 32] = block
             .sender
@@ -149,39 +79,79 @@ impl BlockValidator {
             .map_err(|_| ValidationError::InvalidSignature)
     }
 
-    /// Full validation: structure + hash + signature.
-    ///
-    /// Returns the first `ValidationError` encountered.
     pub fn validate_full(block: &BlockMessage) -> Result<(), ValidationError> {
         Self::validate_structure(block)?;
         Self::validate_hash(block)?;
         Self::validate_signature(block)
     }
 
-    /// Casper invariants: check that all parents are known.
-    ///
-    /// Returns `ValidationError::MissingParents` if any parent is unknown.
     pub fn validate_casper_invariants(
         block: &BlockMessage,
         lookup: &dyn BlockLookup,
     ) -> Result<(), ValidationError> {
-        for parent_hash in &block.header.parents_hash_list {
+        for parent_hash in &block.header.parents {
             if !lookup.contains(parent_hash) {
-                return Err(ValidationError::MissingParents);
+                return Err(ValidationError::InvalidParents);
             }
         }
         Ok(())
     }
 }
 
-/// Block lookup interface for validation checks.
+pub fn validate_block(block: &BlockMessage, context: &ValidationContext) -> Result<(), ValidationError> {
+    BlockValidator::validate_hash(block)?;
+    BlockValidator::validate_signature(block)?;
+    if block.body.state.post_state_hash == [0u8; 32] {
+        return Err(ValidationError::ZeroPostStateHash);
+    }
+    if block.shard_id.is_empty() || block.shard_id != context.shard_id {
+        return Err(ValidationError::ShardIdMismatch);
+    }
+    if block.body.deploys.iter().any(|d| d.deploy.shard_id != block.shard_id) {
+        return Err(ValidationError::ShardIdMismatch);
+    }
+    let mut parent_set = HashSet::new();
+    if block
+        .header
+        .parents
+        .iter()
+        .any(|h| *h == [0u8; 32] || !parent_set.insert(*h))
+    {
+        return Err(ValidationError::InvalidParents);
+    }
+    let max_parent_seq = context
+        .parent_blocks
+        .values()
+        .map(|b| b.seq_num)
+        .max()
+        .unwrap_or(-1);
+    if block.seq_num != max_parent_seq + 1 {
+        return Err(ValidationError::InvalidSequenceNumber);
+    }
+    let bonded_in_parent = context.parent_blocks.values().any(|parent| {
+        parent
+            .body
+            .state
+            .bonds
+            .iter()
+            .any(|bond| bond.validator == block.sender)
+    });
+    if !context.parent_blocks.is_empty() && !bonded_in_parent {
+        return Err(ValidationError::SenderNotBonded);
+    }
+    let mut sigs = HashSet::new();
+    if block.body.deploys.iter().any(|d| !sigs.insert(d.deploy.sig.clone())) {
+        return Err(ValidationError::DuplicateDeploySignature);
+    }
+    for j in &block.justifications {
+        if !context.parent_blocks.contains_key(&j.latest_block_hash) {
+            return Err(ValidationError::UnknownJustification);
+        }
+    }
+    Ok(())
+}
+
 pub trait BlockLookup: Send + Sync {
-    /// Get a block by hash.
-    ///
-    /// Infallible; returns `None` when missing.
     fn get_block(&self, hash: &BlockHash) -> Option<BlockMessage>;
-    /// Check if block exists by hash.
-    ///
-    /// Infallible.
     fn contains(&self, hash: &BlockHash) -> bool;
 }
