@@ -1,22 +1,53 @@
-//! Casper GHOST fork-choice helper.
 
 use std::collections::HashSet;
 
 use crate::storage::{BlockStore, StoreError};
-use crate::types::{BlockHash, Bond};
+use crate::types::{BlockHash, BlockMessage, Bond, Justification};
 
-/// Implements the GHOST (Greediest Heaviest Observed SubTree) fork-choice rule.
+pub trait Block {
+    type Hash;
+    fn block_hash(&self) -> &Self::Hash;
+    fn parents(&self) -> &[Self::Hash];
+    fn creator(&self) -> &[u8];
+    fn seq_num(&self) -> u64;
+    fn bonds(&self) -> &[Bond];
+    fn justifications(&self) -> &[Justification];
+    fn is_valid(&self) -> bool;
+}
+
+impl Block for BlockMessage {
+    type Hash = BlockHash;
+    fn block_hash(&self) -> &Self::Hash {
+        &self.block_hash
+    }
+    fn parents(&self) -> &[Self::Hash] {
+        &self.header.parents
+    }
+    fn creator(&self) -> &[u8] {
+        &self.sender
+    }
+    fn seq_num(&self) -> u64 {
+        self.seq_num.max(0) as u64
+    }
+    fn bonds(&self) -> &[Bond] {
+        &self.body.state.bonds
+    }
+    fn justifications(&self) -> &[Justification] {
+        &self.justifications
+    }
+    fn is_valid(&self) -> bool {
+        !self.block_hash.iter().all(|b| *b == 0)
+    }
+}
+
 pub struct GhostForkChoice;
 
 impl GhostForkChoice {
-    /// Run GHOST from genesis to find the canonical tip.
-    ///
-    /// Returns `StoreError` for storage access failures.
     pub async fn find_tip<S: BlockStore>(
         store: &S,
         bonds: &[Bond],
     ) -> Result<Option<BlockHash>, StoreError> {
-        let genesis = match store.get_genesis().await? {
+            let genesis = match store.get_genesis().await? {
             Some(block) => block,
             None => return Ok(None),
         };
@@ -48,7 +79,6 @@ impl GhostForkChoice {
         }
     }
 
-    /// Compute total stake weight in subtree rooted at `root`.
     async fn subtree_weight<S: BlockStore>(
         store: &S,
         root: &BlockHash,
@@ -64,7 +94,6 @@ impl GhostForkChoice {
         Ok(total)
     }
 
-    /// Check if `candidate` is in the subtree rooted at `root`.
     async fn is_in_subtree<S: BlockStore>(
         store: &S,
         candidate: &BlockHash,
@@ -81,11 +110,11 @@ impl GhostForkChoice {
             if !visited.insert(current) {
                 continue;
             }
-            let block = match store.get(&current).await? {
+            let block = match store.get_by_hash(&current).await? {
                 Some(block) => block,
                 None => continue,
             };
-            for parent in block.header.parents_hash_list {
+            for parent in block.header.parents {
                 if parent == *root {
                     return Ok(true);
                 }
