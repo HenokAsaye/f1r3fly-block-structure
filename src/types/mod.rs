@@ -1,210 +1,127 @@
-//! Core block data structures.
-
 use serde::{Deserialize, Serialize};
 
-/// Blake2b-256 hash of a block header.
 pub type BlockHash = [u8; 32];
-/// Blake2b-256 hash of tuplespace state root.
+pub type BodyHash = [u8; 32];
 pub type StateHash = [u8; 32];
-/// Blake2b-256 hash of validator bonds map.
-pub type BondsHash = [u8; 32];
-/// Blake2b-256 hash of state DAG data.
-pub type StateDagHash = [u8; 32];
-/// Ed25519 public key bytes.
 pub type PublicKey = Vec<u8>;
-/// Ed25519 signature bytes.
 pub type Signature = Vec<u8>;
-/// Cost in phlo units.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PCost {
-    /// Cost value.
-    pub cost: i64,
-}
 
-/// The complete block message — top-level unit of the chain.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockMessage {
-    /// Blake2b-256 hash of the header.
+
     pub block_hash: BlockHash,
-    /// Block header data.
     pub header: BlockHeader,
-    /// Block body data.
     pub body: BlockBody,
-    /// Casper justifications.
     pub justifications: Vec<Justification>,
-    /// Validator's Ed25519 public key.
     pub sender: PublicKey,
-    /// Ed25519 signature over block_hash.
+    pub seq_num: i64,
     pub sig: Signature,
-    /// Signature algorithm name.
     pub sig_algorithm: String,
-    /// Shard identifier.
     pub shard_id: String,
-    /// Reserved extra bytes.
     pub extra_bytes: Vec<u8>,
 }
 
-/// Block header — the structural metadata.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockHeader {
-    /// DAG parents (Casper).
-    pub parents_hash_list: Vec<BlockHash>,
-    /// Tuplespace root after execution.
-    pub post_state_hash: StateHash,
-    /// Validator bonds after block.
-    pub bonds_map_hash: BondsHash,
-    /// Hash of state DAG data.
-    pub state_dag_hash: StateDagHash,
-    /// Number of deploys in the block body.
-    pub deploy_count: u32,
-    /// Unix timestamp in milliseconds.
-    pub timestamp: i64,
-    /// Block version.
-    pub version: i64,
-    /// Per-validator sequence number.
-    pub seq_num: i64,
-    /// Shard identifier.
+    pub parents: Vec<BlockHash>,
+    pub sender: PublicKey,
+    pub sig_algorithm: String,
+    pub sig: Signature,
     pub shard_id: String,
+    pub seq_num: i64,
+    pub version: i32,
+    pub body_hash: BodyHash,
+    pub block_hash: BlockHash,
+    pub dag_level: i64,
+    pub justifications: Vec<Justification>,
 }
 
-/// Block body — the actual payload.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockBody {
-    /// User deploys.
     pub deploys: Vec<ProcessedDeploy>,
-    /// System deploys.
     pub system_deploys: Vec<ProcessedSystemDeploy>,
-    /// State DAG bonded validators.
-    pub state_dag: Vec<BondedValidatorInfo>,
+    pub state: RChainState,
 }
 
-/// A processed user deploy (transaction).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RChainState {
+    pub pre_state_hash: StateHash,
+    pub post_state_hash: StateHash,
+    pub bonds: Vec<Bond>,
+    pub block_number: i64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessedDeploy {
-    /// Raw deploy payload.
     pub deploy: DeployData,
-    /// Execution cost.
     pub cost: PCost,
-    /// Deploy log events.
     pub deploy_log: Vec<Event>,
-    /// Payment results events.
     pub payments_results: Vec<Event>,
-    /// Whether execution failed.
     pub is_failed: bool,
+    pub system_deploy_error: String,
 }
 
-/// A processed system deploy.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProcessedSystemDeploy {
-    /// System deploy payload.
-    pub deploy: SystemDeploy,
-    /// Execution cost.
-    pub cost: PCost,
-    /// Event log produced by system deploy.
-    pub event_log: Vec<Event>,
-    /// Optional error message if execution failed.
-    pub error_msg: Option<String>,
+pub enum ProcessedSystemDeploy {
+    CloseBlockDeploy(CloseBlockDeploy),
+    SlashSystemDeploy(SlashSystemDeploy),
 }
 
-/// System deploy data.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct CloseBlockDeploy {}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SystemDeploy {
-    /// Raw deploy data.
-    pub data: Vec<u8>,
-    /// Signature bytes.
-    pub sig: Vec<u8>,
-    /// Signature algorithm.
-    pub sig_algorithm: String,
+pub struct SlashSystemDeploy {
+    pub invalid_block_hash: Vec<u8>,
+    pub issuer_public_key: Vec<u8>,
 }
 
-/// The raw deploy submitted by a user.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PCost {
+    pub cost: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeployData {
-    /// Deployer public key.
     pub deployer: PublicKey,
-    /// Rholang source code.
     pub term: String,
-    /// Unix timestamp in milliseconds.
     pub timestamp: i64,
-    /// Signature over deploy payload.
     pub sig: Signature,
-    /// Signature algorithm.
     pub sig_algorithm: String,
-    /// Price per phlo unit.
     pub phlo_price: i64,
-    /// Maximum phlo limit.
     pub phlo_limit: i64,
-    /// Minimum block number after which deploy is valid.
     pub valid_after_block_number: i64,
-    /// Shard identifier.
     pub shard_id: String,
 }
 
-/// Casper justification — links to latest messages from each validator.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Justification {
-    /// Validator public key.
-    pub validator: PublicKey,
-    /// Latest block hash by validator.
-    pub latest_block_hash: BlockHash,
-}
-
-/// Validator bond information.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bond {
-    /// Validator public key.
     pub validator: PublicKey,
-    /// Stake amount.
     pub stake: i64,
 }
 
-/// State DAG validator info.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BondedValidatorInfo {
-    /// Validator public key.
+pub struct Justification {
     pub validator: PublicKey,
-    /// Free stake amount.
-    pub free_stake: i64,
+    pub latest_block_hash: BlockHash,
 }
 
-/// Execution event.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Event {
-    /// Produce event.
     Produce(ProduceEvent),
-    /// Consume event.
     Consume(ConsumeEvent),
-    /// Comm event.
-    Comm(CommEvent),
 }
 
-/// Produce event details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProduceEvent {
-    /// Blake2b hash of the channel name.
     pub channel_hash: Vec<u8>,
-    /// Serialized Rholang term data.
     pub data: Vec<u8>,
-    /// Whether the produce is persistent.
     pub persistent: bool,
 }
 
-/// Consume event details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConsumeEvent {
-    /// Blake2b hashes of channel names.
     pub channel_hashes: Vec<Vec<u8>>,
-    /// Hash of the continuation.
-    pub continuation_hash: Vec<u8>,
-    /// Whether the consume is persistent.
+    pub data: Vec<u8>,
     pub persistent: bool,
-}
-
-/// Comm event details.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommEvent {
-    /// Consume event.
-    pub consume: ConsumeEvent,
-    /// Produce events.
-    pub produces: Vec<ProduceEvent>,
 }
