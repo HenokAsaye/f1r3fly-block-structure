@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package block;
+package casper;
 
 message BlockMessage {
   bytes block_hash = 1;
@@ -8,28 +8,38 @@ message BlockMessage {
   BlockBody body = 3;
   repeated Justification justifications = 4;
   bytes sender = 5;
-  bytes sig = 6;
-  string sig_algorithm = 7;
-  string shard_id = 8;
-  bytes extra_bytes = 9;
+  int64 seq_num = 6;
+  bytes sig = 7;
+  string sig_algorithm = 8;
+  string shard_id = 9;
+  bytes extra_bytes = 10;
 }
 
 message BlockHeader {
-  repeated bytes parents_hash_list = 1;
-  bytes post_state_hash = 2;
-  bytes bonds_map_hash = 3;
-  bytes state_dag_hash = 4;
-  int32 deploy_count = 5;
-  int64 timestamp = 6;
-  int64 version = 7;
-  int64 seq_num = 8;
-  string shard_id = 9;
+  repeated bytes parents = 1;
+  bytes sender = 2;
+  string sig_algorithm = 3;
+  bytes sig = 4;
+  string shard_id = 5;
+  int64 seq_num = 6;
+  int32 version = 7;
+  bytes body_hash = 8;
+  bytes block_hash = 9;
+  int64 dag_level = 10;
+  repeated Justification justifications = 11;
 }
 
 message BlockBody {
   repeated ProcessedDeploy deploys = 1;
   repeated ProcessedSystemDeploy system_deploys = 2;
-  repeated BondedValidatorInfo state_dag = 3;
+  RChainState state = 3;
+}
+
+message RChainState {
+  bytes pre_state_hash = 1;
+  bytes post_state_hash = 2;
+  repeated Bond bonds = 3;
+  int64 block_number = 4;
 }
 
 message ProcessedDeploy {
@@ -38,58 +48,27 @@ message ProcessedDeploy {
   repeated Event deploy_log = 3;
   repeated Event payments_results = 4;
   bool is_failed = 5;
-}
-
-message PCost {
-  int64 cost = 1;
+  string system_deploy_error = 6;
 }
 
 message ProcessedSystemDeploy {
-  SystemDeploy deploy = 1;
-  PCost cost = 2;
-  repeated Event event_log = 3;
-  string error_msg = 4;
-  bool has_error = 5;
+  oneof system_deploy {
+    CloseBlockDeploy close_block_deploy = 1;
+    SlashSystemDeploy slash_system_deploy = 2;
+  }
 }
 
-message SystemDeploy {
-  bytes data = 1;
-  bytes sig = 2;
-  string sig_algorithm = 3;
-}
+message CloseBlockDeploy {}
 
-message DeployData {
-  bytes deployer = 1;
-  string term = 2;
-  int64 timestamp = 3;
-  bytes sig = 4;
-  string sig_algorithm = 5;
-  int64 phlo_price = 6;
-  int64 phlo_limit = 7;
-  int64 valid_after_block_number = 8;
-  string shard_id = 9;
-}
-
-message Justification {
-  bytes validator = 1;
-  bytes latest_block_hash = 2;
-}
-
-message Bond {
-  bytes validator = 1;
-  int64 stake = 2;
-}
-
-message BondedValidatorInfo {
-  bytes validator = 1;
-  int64 free_stake = 2;
+message SlashSystemDeploy {
+  bytes invalid_block_hash = 1;
+  bytes issuer_public_key = 2;
 }
 
 message Event {
-  oneof event_type {
+  oneof event_instance {
     ProduceEvent produce = 1;
     ConsumeEvent consume = 2;
-    CommEvent comm = 3;
   }
 }
 
@@ -101,15 +80,32 @@ message ProduceEvent {
 
 message ConsumeEvent {
   repeated bytes channel_hashes = 1;
-  bytes continuation_hash = 2;
+  bytes data = 2;
   bool persistent = 3;
 }
 
-message CommEvent {
-  ConsumeEvent consume = 1;
-  repeated ProduceEvent produces = 2;
+message PCost {
+  uint64 cost = 1;
 }
 
-message BondsMap {
-  repeated Bond bonds = 1;
+message Bond {
+  bytes validator = 1;
+  int64 stake = 2;
+}
+
+message Justification {
+  bytes validator = 1;
+  bytes latest_block_hash = 2;
+}
+
+message DeployData {
+  bytes deployer = 1;
+  string term = 2;
+  int64 timestamp = 3;
+  bytes sig = 4;
+  string sig_algorithm = 5;
+  int64 phlo_price = 7;
+  int64 phlo_limit = 8;
+  int64 valid_after_block_number = 10;
+  string shard_id = 11;
 }
